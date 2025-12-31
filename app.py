@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QLineEdit
 )
 from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QEvent
 
 
 class ChatWordViewer(QMainWindow):
@@ -20,18 +21,23 @@ class ChatWordViewer(QMainWindow):
         self.setMinimumSize(1000, 600)
 
         self.comments = []
-        self.word_index = {}     # word -> list[(user, msg)]
-        self.word_counts = {}   # word -> int
+        self.word_index = {}
+        self.word_counts = {}
 
         self.nouns = set()
         self.adjectives = set()
         self.blacklist = set()
         self.saved_words = set()
 
+        self.nav_mode = False
+        self.nav_labels = {}
+
         self.load_pos_files()
         self.load_blacklist()
         self.load_saved_words()
         self.build_ui()
+
+        self.installEventFilter(self)
 
     # ---------------- File loading ----------------
     def load_pos_files(self):
@@ -51,47 +57,31 @@ class ChatWordViewer(QMainWindow):
         self.adjectives = load_txt("adjectives.txt")
 
     def load_blacklist(self):
-        base = Path(__file__).parent
-        path = base / "blacklist.txt"
-
-        if not path.exists():
-            self.blacklist = set()
-            return
-
-        self.blacklist = {
-            line.strip().lower()
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        }
+        path = Path(__file__).parent / "blacklist.txt"
+        if path.exists():
+            self.blacklist = {
+                line.strip().lower()
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            }
 
     def load_saved_words(self):
-        base = Path(__file__).parent
-        path = base / "saved_words.txt"
-
-        if not path.exists():
-            self.saved_words = set()
-            return
-
-        self.saved_words = {
-            line.strip().lower()
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        }
-
-    def save_word(self, word):
-        if word in self.saved_words:
-            return
-
-        self.saved_words.add(word)
         path = Path(__file__).parent / "saved_words.txt"
-        with path.open("a", encoding="utf-8") as f:
-            f.write(word + "\n")
+        if path.exists():
+            self.saved_words = {
+                line.strip().lower()
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            }
+
+    def save_words_to_file(self):
+        path = Path(__file__).parent / "saved_words.txt"
+        path.write_text("\n".join(sorted(self.saved_words)), encoding="utf-8")
 
     # ---------------- UI ----------------
     def build_ui(self):
         root = QWidget()
         self.setCentralWidget(root)
-
         layout = QVBoxLayout(root)
 
         # ===== HEADER =====
@@ -100,11 +90,12 @@ class ChatWordViewer(QMainWindow):
         title = QLabel("Chat Word Viewer")
         title.setStyleSheet("font-size: 20px; font-weight: bold;")
 
-        load_btn = QPushButton("Load JSON")
-        load_btn.clicked.connect(self.open_json)
+        self.load_btn = QPushButton("Load JSON")
+        self.load_btn.clicked.connect(self.open_json)
 
         self.noun_cb = QCheckBox("Nouns")
         self.adj_cb = QCheckBox("Adjectives")
+        self.hide_user_cb = QCheckBox("Hide usernames")
 
         for cb in (self.noun_cb, self.adj_cb):
             cb.stateChanged.connect(self.populate_word_list)
@@ -115,9 +106,10 @@ class ChatWordViewer(QMainWindow):
 
         header.addWidget(title)
         header.addStretch()
-        header.addWidget(load_btn)
+        header.addWidget(self.load_btn)
         header.addWidget(self.noun_cb)
         header.addWidget(self.adj_cb)
+        header.addWidget(self.hide_user_cb)
         header.addWidget(QLabel("Sort:"))
         header.addWidget(self.sort_box)
 
@@ -142,26 +134,31 @@ class ChatWordViewer(QMainWindow):
         self.messages.setReadOnly(True)
         main.addWidget(self.messages, 3)
 
-    # ---------------- JSON loading ----------------
+        # Navigation targets (order matters)
+        self.nav_targets = [
+            self.load_btn,
+            self.noun_cb,
+            self.adj_cb,
+            self.sort_box,
+            self.search,
+            self.word_list,
+            self.messages,
+        ]
+
+    # ---------------- JSON ----------------
     def open_json(self):
         file, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open Twitch Chat JSON",
-            "",
-            "JSON Files (*.json)"
+            self, "Open Twitch Chat JSON", "", "JSON Files (*.json)"
         )
         if file:
-            self.load_json(file)
+            with open(file, "r", encoding="utf-8") as f:
+                data = json.load(f)
 
-    def load_json(self, path):
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            self.comments = data.get("comments", [])
+            self.build_word_index()
+            self.populate_word_list()
 
-        self.comments = data.get("comments", [])
-        self.build_word_index()
-        self.populate_word_list()
-
-    # ---------------- Word processing ----------------
+    # ---------------- Processing ----------------
     def build_word_index(self):
         self.word_index.clear()
         self.word_counts.clear()
@@ -179,37 +176,31 @@ class ChatWordViewer(QMainWindow):
                 self.word_counts[w] = self.word_counts.get(w, 0) + 1
 
     def word_matches_pos(self, word):
-        filters = []
-
+        active = []
         if self.noun_cb.isChecked():
-            filters.append(word in self.nouns)
+            active.append(word in self.nouns)
         if self.adj_cb.isChecked():
-            filters.append(word in self.adjectives)
-
-        return not filters or any(filters)
+            active.append(word in self.adjectives)
+        return not active or any(active)
 
     def populate_word_list(self):
         self.word_list.clear()
-        query = self.search.text().lower()
+        q = self.search.text().lower()
 
         words = [
-            w for w in self.word_index.keys()
-            if self.word_matches_pos(w)
-            and (not query or query in w)
+            w for w in self.word_index
+            if self.word_matches_pos(w) and (not q or q in w)
         ]
 
         if self.sort_box.currentText() == "By count":
-            words.sort(key=lambda w: self.word_counts.get(w, 0), reverse=True)
+            words.sort(key=lambda w: self.word_counts[w], reverse=True)
         else:
             words.sort()
 
         for w in words:
-            count = self.word_counts[w]
-            item = QListWidgetItem(f"{w} ({count})")
-
+            item = QListWidgetItem(f"{w} ({self.word_counts[w]})")
             if w in self.saved_words:
-                item.setForeground(QColor("#3aa655"))  # green
-
+                item.setForeground(QColor("#3aa655"))
             self.word_list.addItem(item)
 
     # ---------------- Selection ----------------
@@ -219,18 +210,62 @@ class ChatWordViewer(QMainWindow):
             return
 
         word = item.text().rsplit(" (", 1)[0]
-        entries = self.word_index.get(word, [])
-
         self.messages.clear()
-        for user, msg in entries:
-            self.messages.append(
-                f"<b>{user}</b>: {msg}<br>"
-            )
+
+        for user, msg in self.word_index.get(word, []):
+            if self.hide_user_cb.isChecked():
+                self.messages.append(msg)
+            else:
+                self.messages.append(f"<b>{user}</b>: {msg}<br>")
 
     def word_double_clicked(self, item):
         word = item.text().rsplit(" (", 1)[0]
-        self.save_word(word)
-        item.setForeground(QColor("#3aa655"))
+
+        if word in self.saved_words:
+            self.saved_words.remove(word)
+            item.setForeground(QColor("black"))
+        else:
+            self.saved_words.add(word)
+            item.setForeground(QColor("#3aa655"))
+
+        self.save_words_to_file()
+
+    # ---------------- Navigation (Alt mode) ----------------
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Alt:
+                self.toggle_nav_mode()
+                return True
+
+            if self.nav_mode and Qt.Key.Key_0 <= event.key() <= Qt.Key.Key_9:
+                idx = event.key() - Qt.Key.Key_0
+                if idx < len(self.nav_targets):
+                    self.nav_targets[idx].setFocus()
+                    self.toggle_nav_mode()
+                return True
+
+        return super().eventFilter(obj, event)
+
+    def toggle_nav_mode(self):
+        self.nav_mode = not self.nav_mode
+
+        # Clean up
+        for lbl in self.nav_labels.values():
+            lbl.deleteLater()
+        self.nav_labels.clear()
+
+        if not self.nav_mode:
+            return
+
+        for i, widget in enumerate(self.nav_targets):
+            label = QLabel(str(i), self)
+            label.setStyleSheet(
+                "background: black; color: white; padding: 2px; font-size: 10px;"
+            )
+            pos = widget.mapTo(self, widget.rect().topLeft())
+            label.move(pos.x() - 15, pos.y())
+            label.show()
+            self.nav_labels[i] = label
 
 
 # ---------------- Run ----------------

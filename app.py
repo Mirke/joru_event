@@ -2,6 +2,31 @@ import sys
 import json
 import re
 from pathlib import Path
+
+# ==========================================================
+# ======================= CONFIG ===========================
+# ==========================================================
+
+APP_TITLE = "Chat Word Viewer"
+WINDOW_MIN_SIZE = (1000, 600)
+
+NAV_OVERLAY_BG = "black"
+NAV_OVERLAY_COLOR = "white"
+NAV_OVERLAY_FONT_SIZE = 10
+NAV_OVERLAY_PADDING = 3
+NAV_OVERLAY_OFFSET_X = -18
+NAV_OVERLAY_OFFSET_Y = 0
+
+SAVED_WORD_COLOR = "#3aa655"
+DEFAULT_WORD_COLOR = "black"
+
+CAPS_DOUBLE_TAP_MS = 350
+
+HEADER_FONT_SIZE = 20
+
+# ==========================================================
+# ==========================================================
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QDialog,
     QVBoxLayout, QHBoxLayout,
@@ -13,6 +38,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor
 from PyQt6.QtCore import Qt, QEvent, QTimer
 
+
+# ================= Saved Words Window =====================
 
 class SavedWordsDialog(QDialog):
     def __init__(self, parent):
@@ -69,11 +96,13 @@ class SavedWordsDialog(QDialog):
         self.refresh()
 
 
+# =================== Main Window ===========================
+
 class ChatWordViewer(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Chat Word Viewer")
-        self.setMinimumSize(1000, 600)
+        self.setWindowTitle(APP_TITLE)
+        self.setMinimumSize(*WINDOW_MIN_SIZE)
 
         self.comments = []
         self.word_index = {}
@@ -84,11 +113,10 @@ class ChatWordViewer(QMainWindow):
         self.blacklist = set()
         self.saved_words = set()
 
-        # Navigation state
-        self.nav_mode = False
+        # Navigation / quick select
         self.nav_labels = {}
+        self.awaiting_nav_input = False
 
-        # Caps-lock double tap detection
         self.caps_count = 0
         self.caps_timer = QTimer()
         self.caps_timer.setSingleShot(True)
@@ -102,6 +130,7 @@ class ChatWordViewer(QMainWindow):
         self.installEventFilter(self)
 
     # ---------------- File loading ----------------
+
     def load_pos_files(self):
         base = Path(__file__).parent
 
@@ -141,6 +170,7 @@ class ChatWordViewer(QMainWindow):
         path.write_text("\n".join(sorted(self.saved_words)), encoding="utf-8")
 
     # ---------------- UI ----------------
+
     def build_ui(self):
         root = QWidget()
         self.setCentralWidget(root)
@@ -148,8 +178,10 @@ class ChatWordViewer(QMainWindow):
 
         header = QHBoxLayout()
 
-        title = QLabel("Chat Word Viewer")
-        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        title = QLabel(APP_TITLE)
+        title.setStyleSheet(
+            f"font-size:{HEADER_FONT_SIZE}px;font-weight:bold;"
+        )
 
         self.load_btn = QPushButton("Load JSON")
         self.load_btn.clicked.connect(self.open_json)
@@ -210,6 +242,7 @@ class ChatWordViewer(QMainWindow):
         ]
 
     # ---------------- JSON ----------------
+
     def open_json(self):
         file, _ = QFileDialog.getOpenFileName(
             self, "Open Twitch Chat JSON", "", "JSON Files (*.json)"
@@ -223,6 +256,7 @@ class ChatWordViewer(QMainWindow):
             self.populate_word_list()
 
     # ---------------- Processing ----------------
+
     def build_word_index(self):
         self.word_index.clear()
         self.word_counts.clear()
@@ -264,10 +298,11 @@ class ChatWordViewer(QMainWindow):
         for w in words:
             item = QListWidgetItem(f"{w} ({self.word_counts[w]})")
             if w in self.saved_words:
-                item.setForeground(QColor("#3aa655"))
+                item.setForeground(QColor(SAVED_WORD_COLOR))
             self.word_list.addItem(item)
 
     # ---------------- Selection ----------------
+
     def word_selected(self):
         item = self.word_list.currentItem()
         if not item:
@@ -287,17 +322,18 @@ class ChatWordViewer(QMainWindow):
 
         if word in self.saved_words:
             self.saved_words.remove(word)
-            item.setForeground(QColor("black"))
+            item.setForeground(QColor(DEFAULT_WORD_COLOR))
         else:
             self.saved_words.add(word)
-            item.setForeground(QColor("#3aa655"))
+            item.setForeground(QColor(SAVED_WORD_COLOR))
 
         self.save_words_to_file()
 
     def open_saved_words(self):
         SavedWordsDialog(self).exec()
 
-    # ---------------- Navigation ----------------
+    # ---------------- Quick Select ----------------
+
     def reset_caps(self):
         self.caps_count = 0
 
@@ -307,51 +343,68 @@ class ChatWordViewer(QMainWindow):
         self.messages.clear()
         self.setFocus()
 
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_CapsLock:
-                self.caps_count += 1
-                if self.caps_count == 1:
-                    self.caps_timer.start(350)
-                elif self.caps_count == 2:
-                    self.caps_timer.stop()
-                    self.caps_count = 0
-                    self.toggle_nav_mode()
-                return True
-
-            if self.nav_mode and Qt.Key.Key_0 <= event.key() <= Qt.Key.Key_9:
-                idx = event.key() - Qt.Key.Key_0
-                if idx < len(self.nav_targets):
-                    self.nav_targets[idx].setFocus()
-                    self.toggle_nav_mode()
-                return True
-
-            if event.key() == Qt.Key.Key_Escape:
-                self.clear_selection()
-                return True
-
-        return super().eventFilter(obj, event)
-
-    def toggle_nav_mode(self):
-        self.nav_mode = not self.nav_mode
-
-        for lbl in self.nav_labels.values():
-            lbl.deleteLater()
-        self.nav_labels.clear()
-
-        if not self.nav_mode:
-            return
+    def show_nav_overlays(self):
+        self.clear_nav_overlays()
 
         for i, widget in enumerate(self.nav_targets):
             label = QLabel(str(i), self)
             label.setStyleSheet(
-                "background:black;color:white;padding:2px;font-size:10px;"
+                f"background:{NAV_OVERLAY_BG};"
+                f"color:{NAV_OVERLAY_COLOR};"
+                f"padding:{NAV_OVERLAY_PADDING}px;"
+                f"font-size:{NAV_OVERLAY_FONT_SIZE}px;"
             )
             pos = widget.mapTo(self, widget.rect().topLeft())
-            label.move(pos.x() - 15, pos.y())
+            label.move(
+                pos.x() + NAV_OVERLAY_OFFSET_X,
+                pos.y() + NAV_OVERLAY_OFFSET_Y
+            )
             label.show()
             self.nav_labels[i] = label
 
+    def clear_nav_overlays(self):
+        for lbl in self.nav_labels.values():
+            lbl.deleteLater()
+        self.nav_labels.clear()
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.KeyPress:
+
+            # ---- CAPS DOUBLE TAP ----
+            if event.key() == Qt.Key.Key_CapsLock:
+                self.caps_count += 1
+                if self.caps_count == 1:
+                    self.caps_timer.start(CAPS_DOUBLE_TAP_MS)
+                elif self.caps_count == 2:
+                    self.caps_timer.stop()
+                    self.caps_count = 0
+                    self.clear_selection()
+                    self.show_nav_overlays()
+                    self.awaiting_nav_input = True
+                return True
+
+            # ---- WAITING FOR NUMBER ----
+            if self.awaiting_nav_input:
+                self.clear_nav_overlays()
+                self.awaiting_nav_input = False
+
+                if Qt.Key.Key_0 <= event.key() <= Qt.Key.Key_9:
+                    idx = event.key() - Qt.Key.Key_0
+                    if idx < len(self.nav_targets):
+                        self.nav_targets[idx].setFocus()
+                return True
+
+            # ---- ESC ----
+            if event.key() == Qt.Key.Key_Escape:
+                self.clear_selection()
+                self.clear_nav_overlays()
+                self.awaiting_nav_input = False
+                return True
+
+        return super().eventFilter(obj, event)
+
+
+# ---------------- Run ----------------
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

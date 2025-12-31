@@ -21,7 +21,6 @@ SAVED_WORD_COLOR = "#3aa655"
 DEFAULT_WORD_COLOR = "black"
 
 CAPS_DOUBLE_TAP_MS = 350
-
 HEADER_FONT_SIZE = 20
 
 # ==========================================================
@@ -113,7 +112,6 @@ class ChatWordViewer(QMainWindow):
         self.blacklist = set()
         self.saved_words = set()
 
-        # Navigation / quick select
         self.nav_labels = {}
         self.awaiting_nav_input = False
 
@@ -186,6 +184,9 @@ class ChatWordViewer(QMainWindow):
         self.load_btn = QPushButton("Load JSON")
         self.load_btn.clicked.connect(self.open_json)
 
+        self.load_folder_btn = QPushButton("Load Folder")
+        self.load_folder_btn.clicked.connect(self.open_folder)
+
         self.saved_btn = QPushButton("Saved Words")
         self.saved_btn.clicked.connect(self.open_saved_words)
 
@@ -204,6 +205,7 @@ class ChatWordViewer(QMainWindow):
         header.addWidget(title)
         header.addStretch()
         header.addWidget(self.load_btn)
+        header.addWidget(self.load_folder_btn)
         header.addWidget(self.saved_btn)
         header.addWidget(self.noun_cb)
         header.addWidget(self.adj_cb)
@@ -230,30 +232,53 @@ class ChatWordViewer(QMainWindow):
         self.messages.setReadOnly(True)
         main.addWidget(self.messages, 3)
 
+        # ORDER MATTERS: visual left → right, top → bottom
         self.nav_targets = [
             self.load_btn,
+            self.load_folder_btn,
             self.saved_btn,
             self.noun_cb,
             self.adj_cb,
+            self.hide_user_cb,
             self.sort_box,
             self.search,
             self.word_list,
             self.messages,
         ]
 
-    # ---------------- JSON ----------------
+    # ---------------- JSON loading ----------------
 
     def open_json(self):
         file, _ = QFileDialog.getOpenFileName(
             self, "Open Twitch Chat JSON", "", "JSON Files (*.json)"
         )
         if file:
-            with open(file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            self.comments = data.get("comments", [])
+            self.comments.clear()
+            self.load_json_file(Path(file))
             self.build_word_index()
             self.populate_word_list()
+
+    def open_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "Open Folder with JSON files"
+        )
+        if not folder:
+            return
+
+        self.comments.clear()
+        for file in Path(folder).glob("*.json"):
+            self.load_json_file(file)
+
+        self.build_word_index()
+        self.populate_word_list()
+
+    def load_json_file(self, path: Path):
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.comments.extend(data.get("comments", []))
+        except Exception:
+            pass  # silently ignore invalid files
 
     # ---------------- Processing ----------------
 
@@ -370,7 +395,6 @@ class ChatWordViewer(QMainWindow):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.KeyPress:
 
-            # ---- CAPS DOUBLE TAP ----
             if event.key() == Qt.Key.Key_CapsLock:
                 self.caps_count += 1
                 if self.caps_count == 1:
@@ -383,7 +407,6 @@ class ChatWordViewer(QMainWindow):
                     self.awaiting_nav_input = True
                 return True
 
-            # ---- WAITING FOR NUMBER ----
             if self.awaiting_nav_input:
                 self.clear_nav_overlays()
                 self.awaiting_nav_input = False
@@ -394,7 +417,6 @@ class ChatWordViewer(QMainWindow):
                         self.nav_targets[idx].setFocus()
                 return True
 
-            # ---- ESC ----
             if event.key() == Qt.Key.Key_Escape:
                 self.clear_selection()
                 self.clear_nav_overlays()

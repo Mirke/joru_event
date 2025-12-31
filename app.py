@@ -3,7 +3,7 @@ import json
 import re
 from pathlib import Path
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
+    QApplication, QMainWindow, QWidget, QDialog,
     QVBoxLayout, QHBoxLayout,
     QListWidget, QListWidgetItem,
     QTextEdit, QPushButton,
@@ -11,7 +11,62 @@ from PyQt6.QtWidgets import (
     QComboBox, QLineEdit
 )
 from PyQt6.QtGui import QColor
-from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtCore import Qt, QEvent, QTimer
+
+
+class SavedWordsDialog(QDialog):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.setWindowTitle("Saved Words")
+        self.setMinimumSize(300, 400)
+
+        layout = QVBoxLayout(self)
+
+        self.list = QListWidget()
+        layout.addWidget(self.list)
+
+        self.input = QLineEdit()
+        self.input.setPlaceholderText("Add word…")
+        layout.addWidget(self.input)
+
+        btns = QHBoxLayout()
+        add_btn = QPushButton("Add")
+        remove_btn = QPushButton("Remove selected")
+
+        add_btn.clicked.connect(self.add_word)
+        remove_btn.clicked.connect(self.remove_word)
+
+        btns.addWidget(add_btn)
+        btns.addWidget(remove_btn)
+        layout.addLayout(btns)
+
+        self.refresh()
+
+    def refresh(self):
+        self.list.clear()
+        for w in sorted(self.parent.saved_words):
+            self.list.addItem(w)
+
+    def add_word(self):
+        word = self.input.text().strip().lower()
+        if not word:
+            return
+        self.parent.saved_words.add(word)
+        self.parent.save_words_to_file()
+        self.parent.populate_word_list()
+        self.input.clear()
+        self.refresh()
+
+    def remove_word(self):
+        item = self.list.currentItem()
+        if not item:
+            return
+        word = item.text()
+        self.parent.saved_words.discard(word)
+        self.parent.save_words_to_file()
+        self.parent.populate_word_list()
+        self.refresh()
 
 
 class ChatWordViewer(QMainWindow):
@@ -29,8 +84,15 @@ class ChatWordViewer(QMainWindow):
         self.blacklist = set()
         self.saved_words = set()
 
+        # Navigation state
         self.nav_mode = False
         self.nav_labels = {}
+
+        # Caps-lock double tap detection
+        self.caps_count = 0
+        self.caps_timer = QTimer()
+        self.caps_timer.setSingleShot(True)
+        self.caps_timer.timeout.connect(self.reset_caps)
 
         self.load_pos_files()
         self.load_blacklist()
@@ -84,7 +146,6 @@ class ChatWordViewer(QMainWindow):
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
 
-        # ===== HEADER =====
         header = QHBoxLayout()
 
         title = QLabel("Chat Word Viewer")
@@ -93,9 +154,13 @@ class ChatWordViewer(QMainWindow):
         self.load_btn = QPushButton("Load JSON")
         self.load_btn.clicked.connect(self.open_json)
 
+        self.saved_btn = QPushButton("Saved Words")
+        self.saved_btn.clicked.connect(self.open_saved_words)
+
         self.noun_cb = QCheckBox("Nouns")
         self.adj_cb = QCheckBox("Adjectives")
-        self.hide_user_cb = QCheckBox("Hide usernames")
+        self.hide_user_cb = QCheckBox("&Hide usernames")
+        self.hide_user_cb.stateChanged.connect(self.word_selected)
 
         for cb in (self.noun_cb, self.adj_cb):
             cb.stateChanged.connect(self.populate_word_list)
@@ -107,6 +172,7 @@ class ChatWordViewer(QMainWindow):
         header.addWidget(title)
         header.addStretch()
         header.addWidget(self.load_btn)
+        header.addWidget(self.saved_btn)
         header.addWidget(self.noun_cb)
         header.addWidget(self.adj_cb)
         header.addWidget(self.hide_user_cb)
@@ -115,13 +181,11 @@ class ChatWordViewer(QMainWindow):
 
         layout.addLayout(header)
 
-        # ===== SEARCH =====
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search words...")
+        self.search.setPlaceholderText("Search words…")
         self.search.textChanged.connect(self.populate_word_list)
         layout.addWidget(self.search)
 
-        # ===== MAIN =====
         main = QHBoxLayout()
         layout.addLayout(main)
 
@@ -134,9 +198,9 @@ class ChatWordViewer(QMainWindow):
         self.messages.setReadOnly(True)
         main.addWidget(self.messages, 3)
 
-        # Navigation targets (order matters)
         self.nav_targets = [
             self.load_btn,
+            self.saved_btn,
             self.noun_cb,
             self.adj_cb,
             self.sort_box,
@@ -216,7 +280,7 @@ class ChatWordViewer(QMainWindow):
             if self.hide_user_cb.isChecked():
                 self.messages.append(msg)
             else:
-                self.messages.append(f"<b>{user}</b>: {msg}<br>")
+                self.messages.append(f"<b>{user}</b>: {msg}")
 
     def word_double_clicked(self, item):
         word = item.text().rsplit(" (", 1)[0]
@@ -230,11 +294,29 @@ class ChatWordViewer(QMainWindow):
 
         self.save_words_to_file()
 
-    # ---------------- Navigation (Alt mode) ----------------
+    def open_saved_words(self):
+        SavedWordsDialog(self).exec()
+
+    # ---------------- Navigation ----------------
+    def reset_caps(self):
+        self.caps_count = 0
+
+    def clear_selection(self):
+        self.word_list.clearSelection()
+        self.search.clear()
+        self.messages.clear()
+        self.setFocus()
+
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_Alt:
-                self.toggle_nav_mode()
+            if event.key() == Qt.Key.Key_CapsLock:
+                self.caps_count += 1
+                if self.caps_count == 1:
+                    self.caps_timer.start(350)
+                elif self.caps_count == 2:
+                    self.caps_timer.stop()
+                    self.caps_count = 0
+                    self.toggle_nav_mode()
                 return True
 
             if self.nav_mode and Qt.Key.Key_0 <= event.key() <= Qt.Key.Key_9:
@@ -244,12 +326,15 @@ class ChatWordViewer(QMainWindow):
                     self.toggle_nav_mode()
                 return True
 
+            if event.key() == Qt.Key.Key_Escape:
+                self.clear_selection()
+                return True
+
         return super().eventFilter(obj, event)
 
     def toggle_nav_mode(self):
         self.nav_mode = not self.nav_mode
 
-        # Clean up
         for lbl in self.nav_labels.values():
             lbl.deleteLater()
         self.nav_labels.clear()
@@ -260,7 +345,7 @@ class ChatWordViewer(QMainWindow):
         for i, widget in enumerate(self.nav_targets):
             label = QLabel(str(i), self)
             label.setStyleSheet(
-                "background: black; color: white; padding: 2px; font-size: 10px;"
+                "background:black;color:white;padding:2px;font-size:10px;"
             )
             pos = widget.mapTo(self, widget.rect().topLeft())
             label.move(pos.x() - 15, pos.y())
@@ -268,7 +353,6 @@ class ChatWordViewer(QMainWindow):
             self.nav_labels[i] = label
 
 
-# ---------------- Run ----------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = ChatWordViewer()

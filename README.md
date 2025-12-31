@@ -11,7 +11,7 @@ Python software that allows you to add in JSON files and filter and grab chat me
 3. Open terminal software of choice
 4. Run ```pip --version``` to check if you have it installed.
 5. Run ```pip install PyQt6```
-6. Now you can either double click on app.py or move in terminal to folder and run ```py .\app.py``` for windows and ```py app.py``` for linux
+6. Now you can either double click on app.py or move in terminal to folder and run ```py .\app.py``` or ```python .\app.py```  for windows and ```py app.py``` or ```python app.py``` for linux
 
 ## FEATURES
 

@@ -1,3 +1,18 @@
+"""
+BUN Dictionary
+--------------
+
+A PyQt6 application for exploring words from Twitch-style chat JSON files.
+
+Main features:
+- Load single JSON or entire folders of JSON files
+- Build a word → message index
+- Filter by part-of-speech (nouns / adjectives)
+- Save / unsave words
+- Hide or show usernames
+- Keyboard-only "Quick Select" navigation using Caps Lock
+"""
+
 import sys
 import json
 import re
@@ -6,20 +21,26 @@ from pathlib import Path
 # ==========================================================
 # ======================= CONFIG ===========================
 # ==========================================================
+# All visual + behavioral tuning lives here.
+# This makes the app easy to re-skin or tweak without
+# touching logic code.
 
-APP_TITLE = "Chat Word Viewer"
+APP_TITLE = "BUN Dictionary"
 WINDOW_MIN_SIZE = (1000, 600)
 
+# Quick-select number overlay styling
 NAV_OVERLAY_BG = "black"
 NAV_OVERLAY_COLOR = "white"
-NAV_OVERLAY_FONT_SIZE = 10
-NAV_OVERLAY_PADDING = 3
-NAV_OVERLAY_OFFSET_X = -18
+NAV_OVERLAY_FONT_SIZE = 15
+NAV_OVERLAY_PADDING = 0
+NAV_OVERLAY_OFFSET_X = 0
 NAV_OVERLAY_OFFSET_Y = 0
 
+# Word list colors
 SAVED_WORD_COLOR = "#3aa655"
 DEFAULT_WORD_COLOR = "black"
 
+# Timing (milliseconds)
 CAPS_DOUBLE_TAP_MS = 350
 HEADER_FONT_SIZE = 20
 
@@ -38,24 +59,32 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtCore import Qt, QEvent, QTimer
 
 
-# ================= Saved Words Window =====================
+# ==========================================================
+# ================= Saved Words Dialog =====================
+# ==========================================================
+# Small modal window for manually managing saved words.
+# It edits the SAME saved_words set as the main window.
 
 class SavedWordsDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
-        self.parent = parent
+        self.parent = parent  # reference to ChatWordViewer
+
         self.setWindowTitle("Saved Words")
         self.setMinimumSize(300, 400)
 
         layout = QVBoxLayout(self)
 
+        # List of currently saved words
         self.list = QListWidget()
         layout.addWidget(self.list)
 
+        # Input to manually add a word
         self.input = QLineEdit()
         self.input.setPlaceholderText("Add word…")
         layout.addWidget(self.input)
 
+        # Buttons
         btns = QHBoxLayout()
         add_btn = QPushButton("Add")
         remove_btn = QPushButton("Remove selected")
@@ -70,24 +99,30 @@ class SavedWordsDialog(QDialog):
         self.refresh()
 
     def refresh(self):
+        """Rebuild the list from the parent's saved_words set."""
         self.list.clear()
         for w in sorted(self.parent.saved_words):
             self.list.addItem(w)
 
     def add_word(self):
+        """Add a word to saved_words and persist it."""
         word = self.input.text().strip().lower()
         if not word:
             return
+
         self.parent.saved_words.add(word)
         self.parent.save_words_to_file()
         self.parent.populate_word_list()
+
         self.input.clear()
         self.refresh()
 
     def remove_word(self):
+        """Remove selected word from saved_words."""
         item = self.list.currentItem()
         if not item:
             return
+
         word = item.text()
         self.parent.saved_words.discard(word)
         self.parent.save_words_to_file()
@@ -95,41 +130,57 @@ class SavedWordsDialog(QDialog):
         self.refresh()
 
 
-# =================== Main Window ===========================
+# ==========================================================
+# =================== Main Application =====================
+# ==========================================================
 
 class ChatWordViewer(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # ----- Window setup -----
         self.setWindowTitle(APP_TITLE)
         self.setMinimumSize(*WINDOW_MIN_SIZE)
 
-        self.comments = []
-        self.word_index = {}
-        self.word_counts = {}
+        # ----- Core data -----
+        self.comments = []          # raw comment objects from JSON
+        self.word_index = {}        # word -> [(user, message), ...]
+        self.word_counts = {}       # word -> occurrence count
 
+        # ----- Word metadata -----
         self.nouns = set()
         self.adjectives = set()
         self.blacklist = set()
         self.saved_words = set()
 
-        self.nav_labels = {}
+        # ----- Quick-select navigation state -----
+        self.nav_labels = {}        # overlay QLabel objects
         self.awaiting_nav_input = False
 
+        # Caps-lock double-tap detection
         self.caps_count = 0
         self.caps_timer = QTimer()
         self.caps_timer.setSingleShot(True)
         self.caps_timer.timeout.connect(self.reset_caps)
 
+        # ----- Initialization -----
         self.load_pos_files()
         self.load_blacklist()
         self.load_saved_words()
         self.build_ui()
 
+        # Global keyboard interception
         self.installEventFilter(self)
 
-    # ---------------- File loading ----------------
+    # ======================================================
+    # ================= File loading =======================
+    # ======================================================
 
     def load_pos_files(self):
+        """
+        Load nouns.txt and adjectives.txt from the script directory.
+        These are simple word-per-line lists.
+        """
         base = Path(__file__).parent
 
         def load_txt(name):
@@ -146,6 +197,7 @@ class ChatWordViewer(QMainWindow):
         self.adjectives = load_txt("adjectives.txt")
 
     def load_blacklist(self):
+        """Load usernames that should be ignored entirely."""
         path = Path(__file__).parent / "blacklist.txt"
         if path.exists():
             self.blacklist = {
@@ -155,6 +207,7 @@ class ChatWordViewer(QMainWindow):
             }
 
     def load_saved_words(self):
+        """Load persisted saved words."""
         path = Path(__file__).parent / "saved_words.txt"
         if path.exists():
             self.saved_words = {
@@ -164,16 +217,21 @@ class ChatWordViewer(QMainWindow):
             }
 
     def save_words_to_file(self):
+        """Persist saved_words to disk."""
         path = Path(__file__).parent / "saved_words.txt"
         path.write_text("\n".join(sorted(self.saved_words)), encoding="utf-8")
 
-    # ---------------- UI ----------------
+    # ======================================================
+    # ==================== UI ==============================
+    # ======================================================
 
     def build_ui(self):
+        """Construct all widgets and layouts."""
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
 
+        # ---------- Header ----------
         header = QHBoxLayout()
 
         title = QLabel(APP_TITLE)
@@ -215,11 +273,13 @@ class ChatWordViewer(QMainWindow):
 
         layout.addLayout(header)
 
+        # ---------- Search ----------
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search words…")
         self.search.textChanged.connect(self.populate_word_list)
         layout.addWidget(self.search)
 
+        # ---------- Main content ----------
         main = QHBoxLayout()
         layout.addLayout(main)
 
@@ -232,7 +292,7 @@ class ChatWordViewer(QMainWindow):
         self.messages.setReadOnly(True)
         main.addWidget(self.messages, 3)
 
-        # ORDER MATTERS: visual left → right, top → bottom
+        # All widgets that can receive quick-select focus
         self.nav_targets = [
             self.load_btn,
             self.load_folder_btn,
@@ -246,9 +306,12 @@ class ChatWordViewer(QMainWindow):
             self.messages,
         ]
 
-    # ---------------- JSON loading ----------------
+    # ======================================================
+    # ================= JSON loading =======================
+    # ======================================================
 
     def open_json(self):
+        """Load a single JSON file."""
         file, _ = QFileDialog.getOpenFileName(
             self, "Open Twitch Chat JSON", "", "JSON Files (*.json)"
         )
@@ -259,6 +322,7 @@ class ChatWordViewer(QMainWindow):
             self.populate_word_list()
 
     def open_folder(self):
+        """Load and merge all JSON files in a folder."""
         folder = QFileDialog.getExistingDirectory(
             self, "Open Folder with JSON files"
         )
@@ -273,16 +337,20 @@ class ChatWordViewer(QMainWindow):
         self.populate_word_list()
 
     def load_json_file(self, path: Path):
+        """Safely load comments from a JSON file."""
         try:
             with path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
             self.comments.extend(data.get("comments", []))
         except Exception:
-            pass  # silently ignore invalid files
+            pass  # invalid or unexpected files are ignored
 
-    # ---------------- Processing ----------------
+    # ======================================================
+    # ================= Word processing ====================
+    # ======================================================
 
     def build_word_index(self):
+        """Create word → message mappings and counts."""
         self.word_index.clear()
         self.word_counts.clear()
 
@@ -299,6 +367,7 @@ class ChatWordViewer(QMainWindow):
                 self.word_counts[w] = self.word_counts.get(w, 0) + 1
 
     def word_matches_pos(self, word):
+        """Apply noun/adjective filters."""
         active = []
         if self.noun_cb.isChecked():
             active.append(word in self.nouns)
@@ -307,6 +376,7 @@ class ChatWordViewer(QMainWindow):
         return not active or any(active)
 
     def populate_word_list(self):
+        """Rebuild the word list UI."""
         self.word_list.clear()
         q = self.search.text().lower()
 
@@ -326,9 +396,12 @@ class ChatWordViewer(QMainWindow):
                 item.setForeground(QColor(SAVED_WORD_COLOR))
             self.word_list.addItem(item)
 
-    # ---------------- Selection ----------------
+    # ======================================================
+    # ================= Selection logic ====================
+    # ======================================================
 
     def word_selected(self):
+        """Display messages for the selected word."""
         item = self.word_list.currentItem()
         if not item:
             return
@@ -343,6 +416,7 @@ class ChatWordViewer(QMainWindow):
                 self.messages.append(f"<b>{user}</b>: {msg}")
 
     def word_double_clicked(self, item):
+        """Toggle saved/unsaved state."""
         word = item.text().rsplit(" (", 1)[0]
 
         if word in self.saved_words:
@@ -357,26 +431,33 @@ class ChatWordViewer(QMainWindow):
     def open_saved_words(self):
         SavedWordsDialog(self).exec()
 
-    # ---------------- Quick Select ----------------
+    # ======================================================
+    # ================= Quick Select =======================
+    # ======================================================
 
     def reset_caps(self):
+        """Reset caps-lock tap counter."""
         self.caps_count = 0
 
     def clear_selection(self):
+        """Clear UI state before quick-select."""
         self.word_list.clearSelection()
         self.search.clear()
         self.messages.clear()
         self.setFocus()
 
     def show_nav_overlays(self):
+        """Show numeric overlays on all navigable widgets."""
         self.clear_nav_overlays()
 
         for i, widget in enumerate(self.nav_targets):
             label = QLabel(str(i), self)
+            label.setIndent(8)
+            label.adjustSize()                 # shrink to text
+            label.setFixedSize(25,25) 
             label.setStyleSheet(
                 f"background:{NAV_OVERLAY_BG};"
                 f"color:{NAV_OVERLAY_COLOR};"
-                f"padding:{NAV_OVERLAY_PADDING}px;"
                 f"font-size:{NAV_OVERLAY_FONT_SIZE}px;"
             )
             pos = widget.mapTo(self, widget.rect().topLeft())
@@ -388,11 +469,26 @@ class ChatWordViewer(QMainWindow):
             self.nav_labels[i] = label
 
     def clear_nav_overlays(self):
+        """Remove all numeric overlays."""
         for lbl in self.nav_labels.values():
             lbl.deleteLater()
         self.nav_labels.clear()
 
     def eventFilter(self, obj, event):
+        """
+        Global keyboard handler.
+
+        CAPS double-tap:
+            - Clears selection
+            - Shows navigation overlays
+            - Waits for a number key
+
+        Number key:
+            - Focus corresponding widget
+
+        ESC:
+            - Clear everything
+        """
         if event.type() == QEvent.Type.KeyPress:
 
             if event.key() == Qt.Key.Key_CapsLock:
@@ -426,7 +522,9 @@ class ChatWordViewer(QMainWindow):
         return super().eventFilter(obj, event)
 
 
-# ---------------- Run ----------------
+# ==========================================================
+# ======================= Run ==============================
+# ==========================================================
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -1,0 +1,64 @@
+/* ---------- Window ---------- */
+QMainWindow {
+    background-color: #121212;
+}
+
+/* ---------- App Title ---------- */
+QLabel#AppTitle {
+    min-width: 300px;
+    min-height: 60px;
+
+    /* Hide text visually */
+    color: transparent;
+
+    /* Title image */
+    background-image: url("title.png");
+    background-repeat: no-repeat;
+    background-position: center;
+}
+
+/* ---------- Header ---------- */
+QLabel {
+    color: #dddddd;
+}
+
+/* ---------- Buttons ---------- */
+QPushButton {
+    background-color: #2a2a2a;
+    color: white;
+    padding: 6px 10px;
+    border-radius: 6px;
+}
+
+QPushButton:hover {
+    background-color: #3a3a3a;
+}
+
+/* ---------- Inputs ---------- */
+QLineEdit {
+    background-color: #1e1e1e;
+    color: #dcdcdc;
+    border: 1px solid #333;
+    padding: 4px;
+}
+
+/* ---------- Word list ---------- */
+QListWidget {
+    background-color: #1e1e1e;
+    color: #dcdcdc;
+    font-family: Consolas;
+    font-size: 11pt;
+}
+
+/* ---------- Messages ---------- */
+QTextEdit {
+    background-color: #1e1e1e;
+    color: #dcdcdc;
+    font-family: Consolas;
+    font-size: 11pt;
+}
+
+/* ---------- Checkboxes ---------- */
+QCheckBox {
+    color: #dddddd;
+}

@@ -32,7 +32,6 @@ WINDOW_MIN_SIZE = (1000, 600)
 NAV_OVERLAY_BG = "black"
 NAV_OVERLAY_COLOR = "white"
 NAV_OVERLAY_FONT_SIZE = 15
-NAV_OVERLAY_PADDING = 0
 NAV_OVERLAY_OFFSET_X = 0
 NAV_OVERLAY_OFFSET_Y = 0
 
@@ -135,6 +134,13 @@ class SavedWordsDialog(QDialog):
 # ==========================================================
 
 class ChatWordViewer(QMainWindow):
+    
+    def load_style(self):
+        path = Path(__file__).parent / "styles.qss"
+        if path.exists():
+            self.setStyleSheet(path.read_text(encoding="utf-8"))
+    
+    
     def __init__(self):
         super().__init__()
 
@@ -168,6 +174,7 @@ class ChatWordViewer(QMainWindow):
         self.load_blacklist()
         self.load_saved_words()
         self.build_ui()
+        self.load_style()
 
         # Global keyboard interception
         self.installEventFilter(self)
@@ -230,14 +237,11 @@ class ChatWordViewer(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
-
+        
         # ---------- Header ----------
         header = QHBoxLayout()
 
-        title = QLabel(APP_TITLE)
-        title.setStyleSheet(
-            f"font-size:{HEADER_FONT_SIZE}px;font-weight:bold;"
-        )
+
 
         self.load_btn = QPushButton("Load JSON")
         self.load_btn.clicked.connect(self.open_json)
@@ -260,7 +264,13 @@ class ChatWordViewer(QMainWindow):
         self.sort_box.addItems(["Alphabetical", "By count"])
         self.sort_box.currentIndexChanged.connect(self.populate_word_list)
 
-        header.addWidget(title)
+        self.reload_style_btn = QPushButton("Reload Theme")
+        self.reload_style_btn.clicked.connect(self.load_style)
+        
+        self.title_label = QLabel("BUN Dictionary")
+        self.title_label.setObjectName("AppTitle")
+        
+        header.addWidget(self.title_label)
         header.addStretch()
         header.addWidget(self.load_btn)
         header.addWidget(self.load_folder_btn)
@@ -270,7 +280,8 @@ class ChatWordViewer(QMainWindow):
         header.addWidget(self.hide_user_cb)
         header.addWidget(QLabel("Sort:"))
         header.addWidget(self.sort_box)
-
+        header.addWidget(self.reload_style_btn)
+        
         layout.addLayout(header)
 
         # ---------- Search ----------
@@ -414,6 +425,7 @@ class ChatWordViewer(QMainWindow):
                 self.messages.append(msg)
             else:
                 self.messages.append(f"<b>{user}</b>: {msg}")
+                
 
     def word_double_clicked(self, item):
         """Toggle saved/unsaved state."""

@@ -31,3 +31,20 @@ Python software that allows you to add in JSON files and filter and grab chat me
 * _blacklist.txt_ counts out the users in the JSON files.
 * _saved_words.txt_ contains the saved words as a save option.
 
+# TODO
+
+* Live updater of the design - If it works
+
+* Change the title to an Image type 
+* Able to change design and save the design options
+* Save the settings of checkboxes and sort placement
+
+## DONE
+
+* Background design option
+* Button design option
+* Sort pulldown design option 
+
+## EXTRA
+
+* Design that doesn't care about the size of window

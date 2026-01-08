@@ -422,9 +422,9 @@ class ChatWordViewer(QMainWindow):
 
         for user, msg in self.word_index.get(word, []):
             if self.hide_user_cb.isChecked():
-                self.messages.append(msg)
+                self.messages.append(f"<p>{msg}</p>")
             else:
-                self.messages.append(f"<b>{user}</b>: {msg}")
+                self.messages.append(f"<p><b>{user}</b>: {msg}</p>")
                 
 
     def word_double_clicked(self, item):

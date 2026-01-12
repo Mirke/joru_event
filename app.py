@@ -135,6 +135,18 @@ class SavedWordsDialog(QDialog):
 
 class ChatWordViewer(QMainWindow):
     
+    # NEW
+    def normalize_user(self, user):
+        if isinstance(user, str):
+            return user
+        if isinstance(user, dict):
+            return (
+                user.get("displayName")
+                or user.get("name")
+                or "Unknown"
+            )
+        return "Unknown"
+    
     def load_style(self):
         path = Path(__file__).parent / "styles.qss"
         if path.exists():
@@ -346,31 +358,78 @@ class ChatWordViewer(QMainWindow):
 
         self.build_word_index()
         self.populate_word_list()
+    
+    # --- ADD THIS SECTION ABOVE load_json_file ---
+
+    def detect_chat_type(self, data):
+        if isinstance(data, dict) and "comments" in data:
+            return "twitch"
+        if isinstance(data, list):
+            return "youtube_simple"
+        if isinstance(data, dict) and "items" in data:
+            return "youtube_api"
+        return "unknown"
+
+    def parse_twitch(self, data):
+        out = []
+        for c in data.get("comments", []):
+            user = c.get("commenter", {}).get("display_name", "Unknown")
+            msg = c.get("message", {}).get("body", "")
+            if msg:
+                out.append({"user": user, "message": msg})
+        return out
+
+    def parse_youtube_simple(self, data):
+        out = []
+        for c in data:
+            raw_user = c.get("author", "Unknown")
+            user = self.normalize_user(raw_user)
+            msg = c.get("message", "")
+            if msg:
+                out.append({"user": user, "message": msg})
+        return out
+
+    def parse_youtube_api(self, data):
+        out = []
+        for item in data.get("items", []):
+            raw_user = item.get("authorDetails", {})
+            user = self.normalize_user(raw_user)
+            msg = item.get("snippet", {}).get("displayMessage", "")
+            if msg:
+                out.append({"user": user, "message": msg})
+        return out
 
     def load_json_file(self, path: Path):
-        """Safely load comments from a JSON file."""
         try:
             with path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
-            self.comments.extend(data.get("comments", []))
+
+            kind = self.detect_chat_type(data)
+
+            if kind == "twitch":
+                self.comments.extend(self.parse_twitch(data))
+            elif kind == "youtube_simple":
+                self.comments.extend(self.parse_youtube_simple(data))
+            elif kind == "youtube_api":
+                self.comments.extend(self.parse_youtube_api(data))
+
         except Exception:
-            pass  # invalid or unexpected files are ignored
+            pass
 
     # ======================================================
     # ================= Word processing ====================
     # ======================================================
 
     def build_word_index(self):
-        """Create word → message mappings and counts."""
         self.word_index.clear()
         self.word_counts.clear()
 
         for c in self.comments:
-            user = c.get("commenter", {}).get("display_name", "Unknown")
+            user = str(c.get("user", "Unknown"))
             if user.lower() in self.blacklist:
                 continue
 
-            msg = c.get("message", {}).get("body", "")
+            msg = c["message"]
             words = re.findall(r"\b\w+\b", msg.lower())
 
             for w in words:

@@ -37,7 +37,7 @@ NAV_OVERLAY_OFFSET_Y = 0
 
 # Word list colors
 SAVED_WORD_COLOR = "#3aa655"
-DEFAULT_WORD_COLOR = "black"
+DEFAULT_WORD_COLOR = "white"
 
 # Timing (milliseconds)
 CAPS_DOUBLE_TAP_MS = 350
